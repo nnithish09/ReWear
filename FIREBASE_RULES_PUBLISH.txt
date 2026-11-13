@@ -1,0 +1,72 @@
+rules_version = '2';
+// ReWear security rules – v3 (optional imageBase64, max 460800 characters)
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Shape of users/{uid}
+    function validProfile(data) {
+      return data.keys().hasOnly(['name', 'email', 'photoURL', 'createdAt', 'updatedAt'])
+        && data.keys().hasAll(['name', 'email'])
+        && data.name is string && data.name.size() <= 100
+        && data.email is string && data.email.size() <= 320
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 2000));
+    }
+
+    // Shape of users/{uid}/wardrobe/{itemId}
+    function validItem(data) {
+      // imageUrl (legacy) and imageBase64 (direct upload) are optional.
+      return data.keys().hasOnly([
+          'itemName', 'category', 'color', 'size', 'brand', 'occasion',
+          'description', 'imageUrl', 'imageBase64', 'status', 'purchaseDate', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'itemName', 'category', 'color', 'size', 'brand', 'occasion',
+          'description', 'status', 'purchaseDate', 'createdAt', 'updatedAt'
+        ])
+        && data.itemName is string && data.itemName.size() > 0 && data.itemName.size() <= 100
+        && data.category in ['Shirts', 'T-Shirts', 'Trousers', 'Jeans', 'Jackets', 'Dresses',
+                             'Shoes', 'Accessories', 'Sportswear', 'Other']
+        && data.occasion in ['Casual', 'Formal', 'Party', 'Sports', 'Traditional', 'Office', 'Other']
+        && data.status in ['Available', 'Donated', 'Discarded']
+        && data.color is string && data.color.size() > 0 && data.color.size() <= 30
+        && data['size'] is string && data['size'].size() <= 20
+        && data.brand is string && data.brand.size() <= 60
+        && data.description is string && data.description.size() <= 1000
+        && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 2000))
+        && (!('imageBase64' in data) || (data.imageBase64 is string && data.imageBase64.size() <= 460800))
+        && data.purchaseDate is string && data.purchaseDate.size() <= 10
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId) && validProfile(request.resource.data);
+
+      match /wardrobe/{itemId} {
+        allow read, delete: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && validItem(request.resource.data)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time;
+
+        allow update: if isOwner(userId)
+          && validItem(request.resource.data)
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time;
+      }
+    }
+
+    // Everything else is denied by default.
+  }
+}
